@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"math/rand"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -15,6 +17,8 @@ import (
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 )
+
+var HEALTHY = true
 
 // EnvConfig stores the Slack tokens
 type EnvConfig struct {
@@ -186,10 +190,23 @@ func postMessage(client *slack.Client, channel string, slackBlock string, thread
 		slack.MsgOptionTS(threadTS),
 	)
 	if err != nil {
-		fmt.Printf("%s\n", err)
+		log.Errorf("%s\n", err)
 		return
 	}
-	fmt.Printf("Message successfully sent to channel %s at %s", channelID, timestamp)
+	log.Infof("Message successfully sent to channel %s at %s", channelID, timestamp)
+}
+
+func healthHandler(w http.ResponseWriter, r *http.Request) {
+	body := json.RawMessage("OK")
+	if !HEALTHY {
+		body = json.RawMessage("NOT OK")
+		w.WriteHeader(http.StatusInternalServerError)
+	}
+
+	if _, err := w.Write(body); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Errorf("error writing response body: %s", err)
+	}
 }
 
 func main() {
@@ -201,6 +218,21 @@ func main() {
 
 	// Test the connection and return the current users
 	currentUser := testSlackConnection(api)
+
+	healthServer := http.NewServeMux()
+	healthServer.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
+		healthHandler(w, r)
+	})
+
+	healthServer.HandleFunc("/live", func(w http.ResponseWriter, r *http.Request) {
+		healthHandler(w, r)
+	})
+
+	go func() {
+		if err := http.ListenAndServe(fmt.Sprintf(":%d", 8081), healthServer); err != nil {
+			panic(err)
+		}
+	}()
 
 	// Run the infinite loop which will monitor the Slack events for bot mentions
 	err := runEventLoop(api, client, env, currentUser)
