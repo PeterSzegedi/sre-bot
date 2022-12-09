@@ -1,4 +1,4 @@
-module sre-bot
+module skippy
 
 go 1.18
 
